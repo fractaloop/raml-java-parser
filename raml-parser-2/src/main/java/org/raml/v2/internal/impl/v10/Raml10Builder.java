@@ -15,20 +15,6 @@
  */
 package org.raml.v2.internal.impl.v10;
 
-import static org.raml.v2.api.model.v10.RamlFragment.Default;
-import static org.raml.v2.api.model.v10.RamlFragment.Extension;
-import static org.raml.v2.api.model.v10.RamlFragment.Overlay;
-import static org.raml.v2.internal.impl.RamlBuilder.FIRST_PHASE;
-import static org.raml.v2.internal.impl.RamlBuilder.LIBRARY_LINK_PHASE;
-import static org.raml.v2.internal.impl.commons.RamlVersion.RAML_10;
-
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-
 import org.raml.v2.api.loader.ResourceLoader;
 import org.raml.v2.api.model.v10.RamlFragment;
 import org.raml.v2.internal.impl.RamlBuilder;
@@ -38,7 +24,7 @@ import org.raml.v2.internal.impl.commons.phase.DuplicatedPathsTransformer;
 import org.raml.v2.internal.impl.commons.phase.ExtensionsMerger;
 import org.raml.v2.internal.impl.commons.phase.IncludeResolver;
 import org.raml.v2.internal.impl.commons.phase.RamlFragmentGrammarTransformer;
-import org.raml.v2.internal.impl.v10.phase.ReferenceResolverTransformer;
+import org.raml.v2.internal.impl.commons.phase.RamlFragmentLibraryLinkingTransformer;
 import org.raml.v2.internal.impl.commons.phase.ResourceTypesTraitsTransformer;
 import org.raml.v2.internal.impl.commons.phase.SchemaValidationTransformer;
 import org.raml.v2.internal.impl.commons.phase.StringTemplateExpressionTransformer;
@@ -49,6 +35,7 @@ import org.raml.v2.internal.impl.v10.phase.AnnotationValidationPhase;
 import org.raml.v2.internal.impl.v10.phase.ExampleValidationPhase;
 import org.raml.v2.internal.impl.v10.phase.LibraryLinkingTransformation;
 import org.raml.v2.internal.impl.v10.phase.MediaTypeInjectionPhase;
+import org.raml.v2.internal.impl.v10.phase.ReferenceResolverTransformer;
 import org.raml.v2.internal.utils.RamlNodeUtils;
 import org.raml.v2.internal.utils.RamlTreeNodeDumper;
 import org.raml.v2.internal.utils.ResourcePathUtils;
@@ -62,12 +49,31 @@ import org.raml.yagi.framework.phase.GrammarPhase;
 import org.raml.yagi.framework.phase.Phase;
 import org.raml.yagi.framework.phase.TransformationPhase;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+import static org.raml.v2.api.model.v10.RamlFragment.Default;
+import static org.raml.v2.api.model.v10.RamlFragment.Extension;
+import static org.raml.v2.api.model.v10.RamlFragment.Overlay;
+import static org.raml.v2.internal.impl.RamlBuilder.FIRST_PHASE;
+import static org.raml.v2.internal.impl.RamlBuilder.LIBRARY_LINK_PHASE;
+import static org.raml.v2.internal.impl.commons.RamlVersion.RAML_10;
+
 public class Raml10Builder
 {
 
     private final Set<String> openedFiles = new HashSet<>();
 
     public Node build(String stringContent, RamlFragment fragment, ResourceLoader resourceLoader, String resourceLocation, int maxPhaseNumber) throws IOException
+    {
+        return build(null, stringContent, fragment, resourceLoader, resourceLocation, maxPhaseNumber);
+    }
+
+    public Node build(Node contextNode, String stringContent, RamlFragment fragment, ResourceLoader resourceLoader, String resourceLocation, int maxPhaseNumber) throws IOException
     {
         if (openedFiles.contains(resourceLocation))
         {
@@ -83,6 +89,8 @@ public class Raml10Builder
             {
                 return ErrorNodeFactory.createEmptyDocument();
             }
+            if (contextNode != null)
+                rootNode.setContextNode(contextNode);
             boolean applyExtension = false;
             if ((fragment == Extension || fragment == Overlay) && maxPhaseNumber > FIRST_PHASE)
             {
@@ -166,7 +174,9 @@ public class Raml10Builder
         // The first phase expands the includes.
         final TransformationPhase includePhase = new TransformationPhase(new IncludeResolver(resourceLoader), new StringTemplateExpressionTransformer());
 
-        final TransformationPhase ramlFragmentsValidator = new TransformationPhase(new RamlFragmentGrammarTransformer(this, resourceLoader));
+        final TransformationPhase ramlFragmentsValidator = new TransformationPhase(new RamlFragmentGrammarTransformer());
+
+        final TransformationPhase ramlFragmentsLibraryLinker = new TransformationPhase(new RamlFragmentLibraryLinkingTransformer(this, resourceLoader));
 
         // Runs Schema. Applies the Raml rules and changes each node for a more specific. Annotations Library TypeSystem
         final GrammarPhase grammarPhase = new GrammarPhase(RamlHeader.getFragmentRule(fragment));
@@ -203,6 +213,7 @@ public class Raml10Builder
 
         return Arrays.asList(includePhase,
                 ramlFragmentsValidator,
+                ramlFragmentsLibraryLinker,
                 grammarPhase,
                 libraryLink,
                 referenceCheck,
